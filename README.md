@@ -6,7 +6,7 @@ Download EveSolo.py into a folder (i.e. EveSolo) </br>
 cd EveSolo </br>
 python3 -m venv venv </br>
 source venv/bin/activate </br>
-pip install requests tkinter </br>
+pip install requests tkinter Pillow </br>
 python EveSolo.py
 
 ## For Windows
