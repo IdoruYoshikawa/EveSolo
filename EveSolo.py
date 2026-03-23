@@ -216,9 +216,16 @@ def lookup_pilot(name: str) -> dict:
         if km_hash:
             detail = get_killmail_detail(km_id, km_hash)
             info = extract_kill_info(char_id, detail, is_kill=True)
+            # Find our ship type_id for the icon
+            ship_type_id = None
+            for attacker in detail.get("attackers", []):
+                if attacker.get("character_id") == char_id:
+                    ship_type_id = attacker.get("ship_type_id")
+                    break
             result["solo_kill"] = {
                 "killmail_id": km_id,
                 "ship": info["ship"],
+                "ship_type_id": ship_type_id,
                 "weapons": info["weapons"],
                 "datetime": detail.get("killmail_time", "N/A"),
             }
@@ -232,9 +239,11 @@ def lookup_pilot(name: str) -> dict:
         if km_hash:
             detail = get_killmail_detail(km_id, km_hash)
             info = extract_kill_info(char_id, detail, is_kill=False)
+            ship_type_id = detail.get("victim", {}).get("ship_type_id")
             result["solo_loss"] = {
                 "killmail_id": km_id,
                 "ship": info["ship"],
+                "ship_type_id": ship_type_id,
                 "weapons": info["weapons"],
                 "datetime": detail.get("killmail_time", "N/A"),
             }
@@ -244,15 +253,22 @@ def lookup_pilot(name: str) -> dict:
 
 # --- GUI (always-on-top overlay) ---
 
+from io import BytesIO
+from PIL import Image, ImageTk
+
 class OverlayApp:
     def __init__(self, root: tk.Tk):
         self.root = root
-        self.root.title("EVE Solo")
+        self.root.title("EVE Solo Lookup")
         self.root.attributes("-topmost", True)
-        self.root.geometry("380x320")
-        self.root.configure(bg="#1a1a2e")
+        self.root.geometry("420x360")
+        self.root.configure(bg="#0a0a0a")
         self.root.resizable(True, True)
-        self.root.minsize(300, 250)
+        self.root.minsize(340, 250)
+
+        # Keep references to images so they don't get garbage collected
+        self._kill_ship_img = None
+        self._loss_ship_img = None
 
         try:
             self.root.attributes("-alpha", 0.92)
@@ -261,15 +277,13 @@ class OverlayApp:
 
         style = ttk.Style()
         style.theme_use("clam")
-        style.configure("TLabel", background="#1a1a2e", foreground="#e0e0e0",
-                         font=("Consolas", 8))
-        style.configure("Header.TLabel", font=("Consolas", 9, "bold"),
-                         foreground="#00d4ff")
-        style.configure("TEntry", fieldbackground="#16213e", foreground="#e0e0e0",
-                         font=("Consolas", 8))
-        style.configure("TButton", background="#0f3460", foreground="#e0e0e0",
-                         font=("Consolas", 8, "bold"))
-        style.configure("TFrame", background="#1a1a2e")
+        style.configure("TLabel", background="#0a0a0a", foreground="#e0e0e0", font=("Consolas", 8))
+        style.configure("Header.TLabel", font=("Consolas", 9, "bold"), foreground="#00d4ff")
+        style.configure("TEntry", fieldbackground="#222222", foreground="#e0e0e0", font=("Consolas", 8))
+        style.configure("TButton", background="#333333", foreground="#e0e0e0", font=("Consolas", 8, "bold"))
+        style.configure("TFrame", background="#0a0a0a")
+        style.configure("Kill.Header.TLabel", font=("Consolas", 9, "bold"), foreground="#8bc34a")
+        style.configure("Loss.Header.TLabel", font=("Consolas", 9, "bold"), foreground="#ef5350")
 
         # Input frame
         input_frame = ttk.Frame(root)
@@ -294,20 +308,36 @@ class OverlayApp:
 
         self.status_var = tk.StringVar(value="Enter a pilot name and press Lookup.")
         self.status_label = ttk.Label(self.results_frame, textvariable=self.status_var,
-                                       wraplength=360)
+                                       wraplength=400)
         self.status_label.pack(anchor="w")
 
-        self.kill_header = ttk.Label(self.results_frame, text="", style="Header.TLabel")
+        # --- Kill section ---
+        self.kill_header = ttk.Label(self.results_frame, text="", style="Kill.Header.TLabel")
         self.kill_header.pack(anchor="w", pady=(6, 0))
-        self.kill_info = ttk.Label(self.results_frame, text="", wraplength=360,
-                                    justify="left")
-        self.kill_info.pack(anchor="w", padx=(8, 0))
 
-        self.loss_header = ttk.Label(self.results_frame, text="", style="Header.TLabel")
-        self.loss_header.pack(anchor="w", pady=(6, 0))
-        self.loss_info = ttk.Label(self.results_frame, text="", wraplength=360,
+        self.kill_row = ttk.Frame(self.results_frame)
+        self.kill_row.pack(anchor="w", fill="x", padx=(8, 0))
+
+        self.kill_ship_label = tk.Label(self.kill_row, bg="#1a1a2e")
+        self.kill_ship_label.pack(side="left", padx=(0, 6))
+
+        self.kill_info = ttk.Label(self.kill_row, text="", wraplength=320,
                                     justify="left")
-        self.loss_info.pack(anchor="w", padx=(8, 0))
+        self.kill_info.pack(side="left", fill="x")
+
+        # --- Loss section ---
+        self.loss_header = ttk.Label(self.results_frame, text="", style="Loss.Header.TLabel")
+        self.loss_header.pack(anchor="w", pady=(6, 0))
+
+        self.loss_row = ttk.Frame(self.results_frame)
+        self.loss_row.pack(anchor="w", fill="x", padx=(8, 0))
+
+        self.loss_ship_label = tk.Label(self.loss_row, bg="#1a1a2e")
+        self.loss_ship_label.pack(side="left", padx=(0, 6))
+
+        self.loss_info = ttk.Label(self.loss_row, text="", wraplength=320,
+                                    justify="left")
+        self.loss_info.pack(side="left", fill="x")
 
     def paste_from_clipboard(self):
         try:
@@ -315,6 +345,7 @@ class OverlayApp:
             if text:
                 self.name_var.set(text)
                 self.entry.icursor(tk.END)
+                self.do_lookup()
         except tk.TclError:
             pass
 
@@ -326,8 +357,10 @@ class OverlayApp:
         self.status_var.set(f"Looking up '{name}'...")
         self.kill_header.config(text="")
         self.kill_info.config(text="")
+        self.kill_ship_label.config(image="")
         self.loss_header.config(text="")
         self.loss_info.config(text="")
+        self.loss_ship_label.config(image="")
 
         thread = threading.Thread(target=self._lookup_thread, args=(name,), daemon=True)
         thread.start()
@@ -335,11 +368,31 @@ class OverlayApp:
     def _lookup_thread(self, name: str):
         try:
             data = lookup_pilot(name)
-            self.root.after(0, self._display_results, name, data)
+
+            # Fetch ship icons in the background thread
+            kill_img = None
+            loss_img = None
+            if data.get("solo_kill") and data["solo_kill"].get("ship_type_id"):
+                kill_img = self._fetch_ship_icon(data["solo_kill"]["ship_type_id"])
+            if data.get("solo_loss") and data["solo_loss"].get("ship_type_id"):
+                loss_img = self._fetch_ship_icon(data["solo_loss"]["ship_type_id"])
+
+            self.root.after(0, self._display_results, name, data, kill_img, loss_img)
         except Exception as e:
             self.root.after(0, self._display_error, str(e))
 
-    def _display_results(self, name: str, data: dict):
+    def _fetch_ship_icon(self, type_id: int, size: int = 64):
+        try:
+            url = f"https://images.evetech.net/types/{type_id}/icon?size={size}"
+            resp = requests.get(url)
+            resp.raise_for_status()
+            img = Image.open(BytesIO(resp.content))
+            img = img.resize((48, 48), Image.LANCZOS)
+            return ImageTk.PhotoImage(img)
+        except Exception:
+            return None
+
+    def _display_results(self, name: str, data: dict, kill_img, loss_img):
         self.btn.config(state="normal")
         self.status_var.set(f"Results for: {name}  (ID: {data['character_id']})")
 
@@ -355,6 +408,9 @@ class OverlayApp:
                     f"  KM ID   : {kill['killmail_id']}"
                 )
             )
+            if kill_img:
+                self._kill_ship_img = kill_img
+                self.kill_ship_label.config(image=self._kill_ship_img)
         else:
             self.kill_header.config(text="▶ Last Solo Kill")
             self.kill_info.config(text="  No solo kills found.")
@@ -371,6 +427,9 @@ class OverlayApp:
                     f"  KM ID   : {loss['killmail_id']}"
                 )
             )
+            if loss_img:
+                self._loss_ship_img = loss_img
+                self.loss_ship_label.config(image=self._loss_ship_img)
         else:
             self.loss_header.config(text="▶ Last Solo Loss")
             self.loss_info.config(text="  No solo losses found.")
