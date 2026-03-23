@@ -1,10 +1,8 @@
 name: Build Windows EXE
 
 on:
-  # Runs when you push to main branch
   push:
     branches: [main]
-  # Also lets you trigger manually from the Actions tab
   workflow_dispatch:
 
 jobs:
@@ -27,10 +25,18 @@ jobs:
 
       - name: Build EXE
         run: |
-          pyinstaller --onefile --noconsole --name "EVESolo" EveSolo.py
+          pyinstaller --onefile --noconsole --name EVESolo EveSolo.py
+
+      - name: Sign with signtool (self-signed)
+        run: |
+          # Create a self-signed certificate
+          $cert = New-SelfSignedCertificate -Type CodeSigningCert -Subject "CN=EVE Solo" -CertStoreLocation Cert:\CurrentUser\My
+          # Sign the exe
+          Set-AuthenticodeSignature -FilePath "dist\EVESolo.exe" -Certificate $cert -TimestampServer "http://timestamp.digicert.com"
+        shell: pwsh
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: EVESolo
+          name: EVE-Solo
           path: dist/EVESolo.exe
