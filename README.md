@@ -6,5 +6,5 @@ pip install requests tkinter
 python EveSolo.py
 
 For Windows:
-Download the Windows build exe file and execute it. 
+Download the Windows build zip file, unzip it, and execute the EveSolo.exe
 
